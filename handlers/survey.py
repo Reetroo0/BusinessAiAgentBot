@@ -1,73 +1,97 @@
-from aiogram import Router, F
-from aiogram.types import Message
-from aiogram.filters import CommandStart
+from aiogram import Router, F, types
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import json
-import os
+import aiohttp
 from misc.keyboards import main_kb, cancel_kb
+from misc.functions import fetch_digital_maturity
 
 router = Router()
+
 
 class SurveyStates(StatesGroup):
     answering = State()
 
+# Вопросы и ключи для JSON
 questions = [
-    "Насколько бизнес-процессы компании формализованы и документированы (регламенты, инструкции)?",
-    "Используете ли вы систему для автоматизации основных процессов (например, CRM для продаж, ERP для учета ресурсов, СЭД/ECM для документооборота)?",
-    "Есть ли в компании KPI или метрики, которые собираются и анализируются автоматически (BI-системы, дашборды)?",
-    "Как часто принимаются управленческие решения на основе данных (data-driven)?",
-    "Какие ИТ-системы сейчас используются (1С, CRM, ERP, СЭД, самописные решения, Excel/Google Sheets)?",
-    "Есть ли интеграция между системами (например, CRM ↔️ бухгалтерия ↔️ склад)?",
-    "Используете ли вы облачные сервисы (SaaS/PaaS/IaaS) или все системы развернуты локально?",
-    "Как обеспечивается информационная безопасность (резервное копирование, антивирус, контроль доступа)?",
-    "Каков уровень цифровой грамотности сотрудников (умение работать с современными ИТ-системами, готовность к обучению)?",
-    "Проводится ли регулярное обучение персонала по работе с новыми цифровыми инструментами?",
-    "Есть ли в штате ИТ-специалисты или работа ведется через подрядчиков/аутсорс?",
-    "Как сотрудники воспринимают инициативы по автоматизации (сопротивление/нейтрально/поддержка)?",
-    "Есть ли у компании стратегия цифровой трансформации или план развития ИТ?",
-    "Используете ли вы электронные сервисы взаимодействия с государством (Госуслуги, ЭДО, маркировка, контур «Честный знак»)?",
-    "Планируете ли вы внедрение новых решений в ближайшие 1–2 года (CRM, СЭД, электронная торговая площадка и т.д.)?"
+    ("Формализованы ли и задокументированы бизнес-процессы вашей компании (имеются ли действующие регламенты и инструкции)?", "formalization_level"),
+    ("Использует ли ваша компания автоматизированные системы (CRM, ERP, СЭД)?", "automation_systems"),
+    ("Имеются ли автоматические инструменты сбора и анализа KPI?", "kpi_metrics"),
+    ("Часто ли принимаемые вами управленческие решения основаны на анализе данных?", "data_driven_decisions"),
+    ("Применяются ли современные ИТ-системы (CRM, ERP, СЭД, облачные решения)?", "it_systems_used"),
+    ("Интегрированы ли используемые системы друг с другом (например, CRM → Бухгалтерия → Склад)?", "systems_integration"),
+    ("Используется ли облачная инфраструктура (SaaS/PaaS/IaaS) или всё установлено локально?", "cloud_services_usage"),
+    ("Обеспечиваете ли вы резервное копирование данных и защиту от угроз информационной безопасности?", "info_security_measures"),
+    ("Умеют ли ваши сотрудники эффективно пользоваться современными ИТ-технологиями?", "digital_literacy"),
+    ("Проводятся ли мероприятия по повышению цифровизации сотрудников регулярно?", "training_programs"),
+    ("Есть ли штатные специалисты по ИТ или эта область передаётся внешним исполнителям?", "it_specialists_in_house"),
+    ("Поддерживают ли сотрудники идеи внедрения новых цифровых решений?", "employees_automation_perception"),
+    ("Разработана ли стратегия цифровой трансформации вашей компании?", "it_strategy"),
+    ("Пользуется ли организация электронными сервисами взаимодействия с государственными органами (Госуслуги, ЭДО, «Честный знак»)?", "state_electronic_services"),
+    ("Планируется ли расширение автоматизации в ближайшие годы (CRM, СЭД, ETP и др.)?", "future_implementation_plans"),
 ]
+
+# Варианты ответов
+answer_options = {
+    "yes": "Да",
+    "mostly_yes": "Скорее Да",
+    "mostly_no": "Скорее Нет",
+    "unknown": "Нет информации"
+}
+
+def get_inline_kb():
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text=label, callback_data=key)]
+        for key, label in answer_options.items()
+    ])
+    return kb
 
 @router.message(F.text == "Отмена")
 async def cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=main_kb)
 
+
 @router.message(F.text == "Анкета")
 async def survey_start(message: Message, state: FSMContext):
     await state.set_state(SurveyStates.answering)
     await state.update_data(current_question=0, answers={})
-    await message.answer(questions[0], reply_markup=cancel_kb)
+    await message.answer(questions[0][0], reply_markup=get_inline_kb())
 
 
-@router.message(SurveyStates.answering)
-async def get_answers(message: Message, state: FSMContext):
+@router.callback_query(SurveyStates.answering)
+async def get_answer(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     curQuest = data.get("current_question", 0)
     answers = data.get("answers", {})
 
-    answers[f"question_{curQuest + 1}"] = message.text
+    # Записываем ответ
+    question_text, question_key = questions[curQuest]
+    answers[question_key] = callback.data
     await state.update_data(answers=answers)
 
-    # Есть ли следующий вопрос
+    await callback.answer(f"Ответ сохранён: {answer_options[callback.data]}")
+
+    # Следующий вопрос
     nextQuest = curQuest + 1
     if nextQuest < len(questions):
         await state.update_data(current_question=nextQuest)
-        await message.answer(questions[nextQuest], reply_markup=cancel_kb)
+        await callback.message.answer(questions[nextQuest][0], reply_markup=get_inline_kb())
     else:
         try:
-            # Мапчик ответов
-            answersMap = {f"question_{i+1}": answers[f"question_{i+1}"] for i in range(len(questions))}
-             
-            # Перезаписываем файл results.json
-            with open("results.json", "w", encoding="utf-8") as jsonFile:
-                json.dump(answersMap, jsonFile, ensure_ascii=False)
+            # # Сохраним локально (опционально)
+            # with open("results.json", "w", encoding="utf-8") as f:
+            #     json.dump(answers, f, ensure_ascii=False, indent=2)
 
-            await message.answer("Спасибо за участие в опросе! Данные сохранены.", reply_markup=main_kb)
+            # Отправим на API
+            response = await fetch_digital_maturity(answers)
+            result_text = response.get("result", "Не удалось получить результат.")
+
+            # Покажем пользователю в markdown
+            await callback.message.answer(result_text, parse_mode="Markdown", reply_markup=main_kb)
+
         except Exception as e:
-            await message.answer(f"Произошла ошибка при сохранении данных: {str(e)}", reply_markup=main_kb)
+            await callback.message.answer(f"Ошибка при сохранении/запросе: {str(e)}", reply_markup=main_kb)
 
-        # Очищаем состояние
         await state.clear()

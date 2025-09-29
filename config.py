@@ -34,9 +34,9 @@ admin_ids = os.getenv('ADMIN_IDS')
 
 
 # Создание пула соединений
-try:
-    connection_pool = psycopg2.pool.SimpleConnectionPool(1, 10, dsn=dsn)
-    logger.info("Connection pool created successfully")
-except psycopg2.OperationalError as e:
-    logger.error(f"Failed to connect to database: {e}")
-    raise
+# try:
+#     connection_pool = psycopg2.pool.SimpleConnectionPool(1, 10, dsn=dsn)
+#     logger.info("Connection pool created successfully")
+# except psycopg2.OperationalError as e:
+#     logger.error(f"Failed to connect to database: {e}")
+#     raise

@@ -1,7 +1,7 @@
 import asyncio
 from config import bot, dp ,logger
 from handlers import start, survey
-from misc.pgSQL import pgConnect
+#from misc.pgSQL import pgConnect
 from misc.keyboards import main_kb
 
 async def main():
@@ -12,8 +12,8 @@ async def main():
 
     
     
-    # Подключение к БД
-    pgConnect()
+    # # Подключение к БД
+    # pgConnect()
 
     # Уведомление бота о запуске 
     await bot.send_message(chat_id=618425933, text='Бот запущен', reply_markup=main_kb)
